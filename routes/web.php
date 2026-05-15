@@ -4,10 +4,10 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\SplashController;
 
 // Splash screen as the app entry point
-Route::get('/', [SplashController::class, 'index']);
+
 
 // Simple login page (GET) — used by the splash "Get Started" button
-Route::view('/login', 'auth.login')->name('login');
+Route::view('/', 'auth.login')->name('login');
 
 // Plumber listing and booking
 use App\Http\Controllers\PlumberController;
@@ -50,6 +50,74 @@ Route::get('/dashboard/plumbers', function () {
 	$plumbers = App\Models\Plumber::orderBy('rating','desc')->paginate(12);
 	return view('dashboards.plumbers', compact('user','plumbers'));
 })->name('dashboard.plumbers');
+
+// Admin plumber CRUD
+Route::get('/dashboard/plumbers/create', function () {
+	$id = session('user_id'); if (!$id) return redirect()->route('login');
+	$user = App\Models\User::find($id); if (!$user || $user->role !== 'admin') abort(403);
+	return view('admin.plumbers.create');
+})->name('dashboard.plumbers.create');
+
+Route::post('/dashboard/plumbers', function (\Illuminate\Http\Request $r) {
+	$id = session('user_id'); if (!$id) return redirect()->route('login');
+	$user = App\Models\User::find($id); if (!$user || $user->role !== 'admin') abort(403);
+	$data = $r->validate([
+		'name' => 'required|string|max:255',
+		'phone' => 'nullable|string|max:50',
+		'location' => 'nullable|string|max:255',
+		'services' => 'nullable|string',
+		'rating' => 'nullable|numeric|min:0|max:5',
+		'experience_years' => 'nullable|integer|min:0',
+		'available' => 'nullable|boolean',
+	]);
+	$data['services'] = $data['services'] ?? null;
+	$data['available'] = isset($data['available']) ? (bool)$data['available'] : true;
+	App\Models\Plumber::create($data);
+	return redirect()->route('dashboard.plumbers')->with('status','Plumber created');
+})->name('dashboard.plumbers.store');
+
+Route::get('/dashboard/plumbers/{plumber}/edit', function (App\Models\Plumber $plumber) {
+	$id = session('user_id'); if (!$id) return redirect()->route('login');
+	$user = App\Models\User::find($id); if (!$user || $user->role !== 'admin') abort(403);
+	return view('admin.plumbers.edit', compact('plumber'));
+})->name('dashboard.plumbers.edit');
+
+Route::put('/dashboard/plumbers/{plumber}', function (App\Models\Plumber $plumber, \Illuminate\Http\Request $r) {
+	$id = session('user_id'); if (!$id) return redirect()->route('login');
+	$user = App\Models\User::find($id); if (!$user || $user->role !== 'admin') abort(403);
+	$data = $r->validate([
+		'name' => 'required|string|max:255',
+		'phone' => 'nullable|string|max:50',
+		'location' => 'nullable|string|max:255',
+		'services' => 'nullable|string',
+		'rating' => 'nullable|numeric|min:0|max:5',
+		'experience_years' => 'nullable|integer|min:0',
+		'available' => 'nullable|boolean',
+	]);
+	$plumber->update($data);
+	return redirect()->route('dashboard.plumbers')->with('status','Plumber updated');
+})->name('dashboard.plumbers.update');
+
+Route::get('/dashboard/plumbers/{plumber}/delete', function (App\Models\Plumber $plumber) {
+	$id = session('user_id'); if (!$id) return redirect()->route('login');
+	$user = App\Models\User::find($id); if (!$user || $user->role !== 'admin') abort(403);
+	return view('admin.plumbers.delete', compact('plumber'));
+})->name('dashboard.plumbers.delete');
+
+Route::delete('/dashboard/plumbers/{plumber}', function (App\Models\Plumber $plumber) {
+	$id = session('user_id'); if (!$id) return redirect()->route('login');
+	$user = App\Models\User::find($id); if (!$user || $user->role !== 'admin') abort(403);
+	$plumber->delete();
+	return redirect()->route('dashboard.plumbers')->with('status','Plumber deleted');
+})->name('dashboard.plumbers.destroy');
+
+// Admin booking requests view
+Route::get('/dashboard/bookings', function () {
+	$id = session('user_id'); if (!$id) return redirect()->route('login');
+	$user = App\Models\User::find($id); if (!$user || $user->role !== 'admin') abort(403);
+	$bookings = App\Models\Booking::with('plumber')->orderBy('created_at','desc')->paginate(20);
+	return view('admin.bookings.index', compact('user','bookings'));
+})->name('dashboard.bookings');
 Route::get('/dashboard/admin', function () {
 $id = session('user_id');
 if (!$id) return redirect()->route('login');
@@ -71,6 +139,84 @@ $users = App\Models\User::orderBy('created_at','desc')->get();
 $visits = App\Models\Visit::latest()->limit(50)->get();
 return view('dashboards.admin', compact('user','users','visits'));
 })->name('admin.dashboard');
+
+// Admin user management: show, edit, update, delete
+Route::get('/dashboard/users/{user}', function (App\Models\User $user) {
+	$id = session('user_id'); if (!$id) return redirect()->route('login');
+	$current = App\Models\User::find($id); if (!$current || $current->role !== 'admin') abort(403);
+	return view('admin.users.show', compact('user'));
+})->name('dashboard.users.show');
+
+Route::get('/dashboard/users/{user}/edit', function (App\Models\User $user) {
+	$id = session('user_id'); if (!$id) return redirect()->route('login');
+	$current = App\Models\User::find($id); if (!$current || $current->role !== 'admin') abort(403);
+	$plumbers = App\Models\Plumber::all();
+	return view('admin.users.edit', compact('user','plumbers'));
+})->name('dashboard.users.edit');
+
+Route::put('/dashboard/users/{user}', function (App\Models\User $user, \Illuminate\Http\Request $r) {
+	$id = session('user_id'); if (!$id) return redirect()->route('login');
+	$current = App\Models\User::find($id); if (!$current || $current->role !== 'admin') abort(403);
+	$data = $r->validate([
+		'name' => 'required|string',
+		'email' => 'required|email|unique:users,email,'.$user->id,
+		'role' => 'required|in:user,plumber,admin',
+		'plumber_id' => 'nullable|exists:plumbers,id',
+		'password' => 'nullable|string|confirmed|min:6'
+	]);
+	$user->name = $data['name'];
+	$user->email = $data['email'];
+	$user->role = $data['role'];
+	$user->plumber_id = $data['plumber_id'] ?? null;
+	if (!empty($data['password'])) {
+		$user->password = \Illuminate\Support\Facades\Hash::make($data['password']);
+	}
+	$user->save();
+	return redirect()->route('admin.dashboard')->with('status','User updated');
+})->name('dashboard.users.update');
+
+Route::get('/dashboard/users/{user}/delete', function (App\Models\User $user) {
+	$id = session('user_id'); if (!$id) return redirect()->route('login');
+	$current = App\Models\User::find($id); if (!$current || $current->role !== 'admin') abort(403);
+	return view('admin.users.delete', compact('user'));
+})->name('dashboard.users.delete');
+
+Route::delete('/dashboard/users/{user}', function (App\Models\User $user) {
+	$id = session('user_id'); if (!$id) return redirect()->route('login');
+	$current = App\Models\User::find($id); if (!$current || $current->role !== 'admin') abort(403);
+	if ($current->id === $user->id) return redirect()->route('admin.dashboard')->with('status','Cannot delete yourself');
+	$user->delete();
+	return redirect()->route('admin.dashboard')->with('status','User deleted');
+})->name('dashboard.users.destroy');
+
+// Admin: create user (form)
+Route::get('/dashboard/users/create', function () {
+	$id = session('user_id'); if (!$id) return redirect()->route('login');
+	$current = App\Models\User::find($id); if (!$current || $current->role !== 'admin') abort(403);
+	$plumbers = App\Models\Plumber::all();
+	return view('admin.users.create', compact('plumbers'));
+})->name('dashboard.users.create');
+
+// Admin: store new user
+Route::post('/dashboard/users', function (\Illuminate\Http\Request $r) {
+	$id = session('user_id'); if (!$id) return redirect()->route('login');
+	$current = App\Models\User::find($id); if (!$current || $current->role !== 'admin') abort(403);
+	$data = $r->validate([
+		'name' => 'required|string',
+		'email' => 'required|email|unique:users,email',
+		'role' => 'required|in:user,plumber,admin',
+		'plumber_id' => 'nullable|exists:plumbers,id',
+		'password' => 'required|string|confirmed|min:6'
+	]);
+	$user = App\Models\User::create([
+		'name' => $data['name'],
+		'email' => $data['email'],
+		'role' => $data['role'],
+		'plumber_id' => $data['plumber_id'] ?? null,
+		'password' => \Illuminate\Support\Facades\Hash::make($data['password']),
+	]);
+	return redirect()->route('admin.dashboard')->with('status','User created');
+})->name('dashboard.users.store');
 
 // Requests
 Route::get('/requests', function () {
